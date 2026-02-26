@@ -1,5 +1,6 @@
 import os
 import re
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 
@@ -25,6 +26,31 @@ MENU_OMS = [
     "DIRENS",
     "ASSISTENCIAIS",
 ]
+
+# Termos usados para achar cards de drill-down por OM.
+# Mantém variações para tolerar acentos/grafia diferente no dashboard.
+DETAIL_TERMS_BY_OM = {
+    "AFA": [
+        "Formação Aviadores",
+        "Formação Intendência",
+        "Formação Intendências",
+        "Formação Infantaria",
+        "Formação Infante",
+        "Aeronave / Simulador",
+        "Aeronave/Simulador",
+        "Instrução T25",
+        "Instrução T27",
+        "Esforço Aéreo",
+    ],
+    "ASSISTENCIAIS": [
+        "Clique para detalhar",
+    ],
+}
+
+GENERIC_DETAIL_TERMS = [
+    "Clique para detalhar",
+    "Detalhar",
+]
 # ============================
 
 def safe(s: str) -> str:
@@ -32,6 +58,13 @@ def safe(s: str) -> str:
     s = re.sub(r"[\\/:*?\"<>|]+", "_", s)
     s = re.sub(r"\s+", " ", s)
     return s[:120] if len(s) > 120 else s
+
+def normalize(s: str) -> str:
+    s = (s or "").strip().lower()
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = re.sub(r"\s+", " ", s)
+    return s
 
 def wait_qlik(page, extra_ms=0):
     # Qlik é SPA; networkidle nem sempre estabiliza. Mistura de esperas.
@@ -70,6 +103,144 @@ def click_if_exists(page, label: str) -> bool:
         return True
 
     return False
+
+def get_click_targets(page, terms):
+    """Retorna pontos clicáveis que contenham os termos informados."""
+    if not terms:
+        return []
+
+    script = r"""
+    (terms) => {
+      const normalize = (txt) =>
+        (txt || "")
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .toLowerCase();
+
+      const wanted = (terms || []).map(normalize).filter(Boolean);
+      if (!wanted.length) return [];
+
+      const out = [];
+      const seen = new Set();
+
+      for (const el of Array.from(document.querySelectorAll("body *"))) {
+        const raw = (el.innerText || el.textContent || "").trim();
+        if (!raw) continue;
+
+        const norm = normalize(raw);
+        if (!wanted.some((w) => norm.includes(w))) continue;
+
+        let clickable = el.closest(
+          'button,a,[role="button"],[onclick],[tabindex],.qv-object,.qv-object-wrapper,.cell'
+        );
+        if (!clickable) clickable = el;
+
+        const rect = clickable.getBoundingClientRect();
+        if (rect.width < 60 || rect.height < 12) continue;
+        if (
+          rect.right < 0 ||
+          rect.bottom < 0 ||
+          rect.left > window.innerWidth ||
+          rect.top > window.innerHeight
+        ) continue;
+
+        const style = window.getComputedStyle(clickable);
+        if (
+          style.display === "none" ||
+          style.visibility === "hidden" ||
+          Number(style.opacity || 1) === 0
+        ) continue;
+
+        const key = `${Math.round((rect.left + rect.width / 2) / 20)}:${Math.round((rect.top + rect.height / 2) / 20)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        out.push({
+          key,
+          text: raw.slice(0, 90),
+          x: Math.round(rect.left + rect.width / 2),
+          y: Math.round(rect.top + rect.height / 2),
+          top: rect.top,
+          left: rect.left
+        });
+      }
+
+      out.sort((a, b) => (a.top - b.top) || (a.left - b.left));
+      return out;
+    }
+    """
+    try:
+        return page.evaluate(script, terms) or []
+    except Exception as e:
+        print(f"[AVISO] Falha ao mapear detalhes: {e}")
+        return []
+
+def back_to_om(page, om: str) -> bool:
+    if click_if_exists(page, "Voltar"):
+        wait_qlik(page, extra_ms=5000)
+        return True
+
+    # fallback por texto parcial/caixa diferente
+    loc = page.get_by_text(re.compile(r"voltar", re.IGNORECASE))
+    if loc.count() > 0:
+        loc.first.click()
+        wait_qlik(page, extra_ms=5000)
+        return True
+
+    # último recurso: clicar novamente na própria OM no menu
+    if click_menu_item(page, om):
+        wait_qlik(page, extra_ms=6000)
+        return True
+
+    return False
+
+def capture_detail_pages(page, om: str, shots, idx: int) -> int:
+    terms = []
+    terms.extend(DETAIL_TERMS_BY_OM.get(om, []))
+    terms.extend(GENERIC_DETAIL_TERMS)
+
+    # dedup mantendo ordem
+    seen = set()
+    unique_terms = []
+    for t in terms:
+        nt = normalize(t)
+        if not nt or nt in seen:
+            continue
+        seen.add(nt)
+        unique_terms.append(t)
+
+    targets = get_click_targets(page, unique_terms)
+    if not targets:
+        return idx
+
+    print(f"[INFO] {om}: {len(targets)} detalhe(s) mapeado(s).")
+
+    for n, t in enumerate(targets, start=1):
+        try:
+            page.mouse.click(t["x"], t["y"])
+        except Exception:
+            print(f"[AVISO] Não consegui clicar no detalhe #{n} em {om}.")
+            continue
+
+        wait_qlik(page, extra_ms=7000)
+
+        detail_name = safe(t.get("text", "DETALHAR")) or "DETALHAR"
+        png = os.path.join(
+            TMP_DIR,
+            f"page_{idx:03d}_{safe(om)}_{safe(detail_name)}_{n:02d}.png",
+        )
+        screenshot_page(page, png)
+        shots.append(png)
+        print(f"[OK] Capturada: {om} -> {detail_name}")
+        idx += 1
+
+        if not back_to_om(page, om):
+            print(f"[AVISO] Não achei caminho de volta em {om}; interrompendo detalhes dessa OM.")
+            break
+
+    return idx
 
 def screenshot_page(page, out_png: str):
     page.screenshot(path=out_png, full_page=False)
@@ -127,26 +298,7 @@ def main():
             print(f"[OK] Capturada: {om}")
             idx += 1
 
-            # Se existir “Detalhar”, entra e captura 1x (ou mais, se houver vários cliques)
-            # Loop: Detalhar -> print -> Voltar -> (tenta outro Detalhar)
-            # Obs: se tiver vários “Detalhar” diferentes, isso pode pegar só o primeiro.
-            for _ in range(6):  # trava de segurança
-                if not click_if_exists(page, "Detalhar"):
-                    break
-                wait_qlik(page, extra_ms=7000)
-
-                png = os.path.join(TMP_DIR, f"page_{idx:03d}_{safe(om)}_DETALHAR.png")
-                screenshot_page(page, png)
-                shots.append(png)
-                print(f"[OK] Capturada: {om} -> Detalhar")
-                idx += 1
-
-                # voltar
-                if click_if_exists(page, "Voltar"):
-                    wait_qlik(page, extra_ms=5000)
-                else:
-                    # às vezes o “Voltar” é seta/ícone; se não achar, sai do loop
-                    break
+            idx = capture_detail_pages(page, om, shots, idx)
 
         context.close()
         browser.close()
