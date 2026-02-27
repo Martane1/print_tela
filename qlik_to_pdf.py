@@ -28,7 +28,11 @@ def normalize(s: str) -> str:
     s = re.sub(r"\s+", " ", s)
     return s
 
-def click_stage_action_by_text(page, text: str, nth: int = 0) -> bool:
+def is_acronym(text: str) -> bool:
+    txt = (text or "").strip()
+    return bool(re.fullmatch(r"[A-Za-z0-9]{2,4}", txt))
+
+def click_stage_action_by_text(page, text: str, nth: int = 0, whole_word: bool = False) -> bool:
     """
     Fallback robusto para clicar cards/ações no stage do Qlik, com match
     case/acento-insensível no texto renderizado do card.
@@ -60,6 +64,11 @@ def click_stage_action_by_text(page, text: str, nth: int = 0) -> bool:
                 const matches = cards.filter((card) => {
                     if (!isVisible(card)) return false;
                     const txt = norm(card.innerText || card.textContent || "");
+                    if (wholeWord) {
+                        if (txt === target) return true;
+                        const words = txt.split(/[^a-z0-9]+/).filter(Boolean);
+                        return words.includes(target);
+                    }
                     return txt.includes(target);
                 });
 
@@ -75,7 +84,7 @@ def click_stage_action_by_text(page, text: str, nth: int = 0) -> bool:
                 picked.click();
                 return true;
             }""",
-            {"target": target, "nth": nth},
+            {"target": target, "nth": nth, "wholeWord": whole_word},
         ))
     except:
         return False
@@ -115,41 +124,59 @@ def wait_qlik(page, extra_ms=0):
 
 def click_menu_item(page, name: str) -> bool:
     rx_name = re.compile(rf"^\s*{re.escape(name)}\s*$", re.IGNORECASE)
+    whole_word = is_acronym(name)
 
-    # espera um pouco o DOM do menu existir (sem depender de networkidle)
-    try:
-        page.wait_for_timeout(300)
-        # se o seu menu é por role=button com name, isso ajuda o playwright a “ver” o elemento
-        page.get_by_role("button", name=rx_name).first.wait_for(state="visible", timeout=2500)
-    except:
-        pass
+    for attempt in range(6):
+        # evita ficar no meio da rolagem em máquinas mais lentas
+        try:
+            page.mouse.wheel(0, -3000)
+        except:
+            pass
 
-    loc = page.get_by_role("button", name=rx_name)
-    if loc.count() > 0:
-        loc.first.click()
-        return True
+        try:
+            page.wait_for_timeout(300)
+            # se o seu menu é por role=button com name, isso ajuda o playwright a “ver” o elemento
+            page.get_by_role("button", name=rx_name).first.wait_for(state="visible", timeout=2500)
+        except:
+            pass
 
-    if click_stage_action_by_text(page, name):
-        return True
+        loc = page.get_by_role("button", name=rx_name)
+        if loc.count() > 0:
+            loc.first.click()
+            return True
 
-    stage_loc = page.locator("#qv-stage-container").locator(f"text={name}")
-    if stage_loc.count() > 0:
-        stage_loc.first.click()
-        return True
+        if click_stage_action_by_text(page, name, whole_word=whole_word):
+            return True
 
-    loc2 = page.locator(f"text={name}")
-    if loc2.count() > 0:
-        loc2.first.click()
-        return True
+        # para siglas curtas (AFA/ECE), evita substring.
+        stage = page.locator("#qv-stage-container")
+        stage_loc = stage.get_by_text(name, exact=whole_word)
+        if stage_loc.count() > 0:
+            stage_loc.first.click()
+            return True
+
+        loc2 = page.locator(f"text={name}")
+        if loc2.count() > 0 and not whole_word:
+            loc2.first.click()
+            return True
+
+        if attempt < 5:
+            wait_qlik(page, extra_ms=1200 + attempt * 350)
 
     print(f"[AVISO] Menu '{name}' não encontrado.")
     return False
 
 def click_text(page, text: str, nth: int = 0) -> bool:
     stage = page.locator("#qv-stage-container")
+    whole_word = is_acronym(text)
+
+    if whole_word:
+        txt_rx = re.compile(rf"(?<!\w){re.escape(text)}(?!\w)", re.IGNORECASE)
+    else:
+        txt_rx = re.compile(re.escape(text), re.IGNORECASE)
 
     # tenta clicar como footnote (muito comum no Qlik)
-    foot = stage.locator("footer.qv-object-footnote", has_text=re.compile(re.escape(text), re.IGNORECASE))
+    foot = stage.locator("footer.qv-object-footnote", has_text=txt_rx)
     if foot.count() > nth:
         art = foot.nth(nth).locator("xpath=ancestor::article[contains(@class,'qv-object')]")
         if art.count() > 0:
@@ -159,12 +186,12 @@ def click_text(page, text: str, nth: int = 0) -> bool:
         return True
 
     # fallback: texto normal
-    loc = stage.get_by_text(text, exact=False)
+    loc = stage.get_by_text(text, exact=whole_word)
     if loc.count() > nth:
         loc.nth(nth).click()
         return True
 
-    if click_stage_action_by_text(page, text, nth=nth):
+    if click_stage_action_by_text(page, text, nth=nth, whole_word=whole_word):
         return True
 
     return False
@@ -197,7 +224,6 @@ def click_by_bg_image(page, img_substring: str, nth: int = 0) -> bool:
     base_name = os.path.basename(token_base)
     stem = base_name.rsplit(".", 1)[0]
     tokens = {token_base, base_name, stem}
-    tokens.update(part for part in re.split(r"[_\-\s]+", stem) if len(part) >= 3)
     tokens = [t for t in tokens if t]
 
     try:
@@ -338,7 +364,11 @@ def click_card_like(page, contains_text: str, nth: int = 0) -> bool:
         return False
 
     stage = page.locator("#qv-stage-container")
-    txt_rx = re.compile(re.escape(txt), re.IGNORECASE)
+    whole_word = is_acronym(txt)
+    if whole_word:
+        txt_rx = re.compile(rf"(?<!\w){re.escape(txt)}(?!\w)", re.IGNORECASE)
+    else:
+        txt_rx = re.compile(re.escape(txt), re.IGNORECASE)
 
     # 1) Prioridade: footer (texto do card)
     foot = stage.locator("footer.qv-object-footnote", has_text=txt_rx)
@@ -352,7 +382,7 @@ def click_card_like(page, contains_text: str, nth: int = 0) -> bool:
         return True
 
     # 2) Fallback: qualquer elemento com o texto (bem amplo)
-    anytxt = stage.locator(f"text={txt}")
+    anytxt = stage.get_by_text(txt, exact=whole_word)
     if anytxt.count() > nth:
         # tenta subir até o article do objeto e clicar
         art2 = anytxt.nth(nth).locator("xpath=ancestor::article[contains(@class,'qv-object')]")
@@ -363,22 +393,26 @@ def click_card_like(page, contains_text: str, nth: int = 0) -> bool:
         return True
 
     # 3) Fallback com normalização de acento/case
-    if click_stage_action_by_text(page, txt, nth=nth):
+    if click_stage_action_by_text(page, txt, nth=nth, whole_word=whole_word):
         return True
 
     return False
 
-def open_card(page, text_options=None, image_options=None) -> bool:
+def open_card(page, text_options=None, image_options=None, attempts: int = 4) -> bool:
     text_options = text_options or []
     image_options = image_options or []
 
-    for txt in text_options:
-        if click_card_like(page, txt):
-            return True
+    for attempt in range(max(1, attempts)):
+        for txt in text_options:
+            if click_card_like(page, txt):
+                return True
 
-    for img in image_options:
-        if click_by_bg_image(page, img, nth=0):
-            return True
+        for img in image_options:
+            if click_by_bg_image(page, img, nth=0):
+                return True
+
+        if attempt < attempts - 1:
+            wait_qlik(page, extra_ms=1200 + attempt * 350)
 
     return False
 
@@ -416,6 +450,8 @@ def main():
 
         # CHECKPOINT: se nada funcionar, ao menos 1 captura para diagnóstico
         idx = add_shot(page, shots, idx, "00 - HOME (debug)")
+        # Em ambientes mais lentos, os cards do menu principal podem aparecer depois.
+        wait_qlik(page, extra_ms=9000)
         
         # =========================
         # ROTEIRO FIXO = PDF ANEXADO
@@ -586,7 +622,7 @@ def main():
             assistenciais_cards = [
                 (["CBNB"], ["cbnb_egovens_2.png", "cbnb"], "ASSISTENCIAIS - CBNB"),
                 (["CTRB"], ["ctrb_egovens_2.png", "ctrb"], "ASSISTENCIAIS - CTRB"),
-                (["ECE"], ["ece_egovens_2.png", "ece_egovens"], "ASSISTENCIAIS - ECE"),
+                (["ECE"], ["ece_egovens_2.png"], "ASSISTENCIAIS - ECE"),
             ]
 
             for txt_opts, img_opts, label in assistenciais_cards:
