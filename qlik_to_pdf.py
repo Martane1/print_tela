@@ -9,11 +9,11 @@ from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 # ====== CONFIGURE AQUI ======
 QLIK_URL = r"https://acesso.sigaer.intraer:5432/mashup/sense/app/85e81e92-7767-4397-896a-3c78068598b8/sheet/cf6953e4-a968-4199-9046-436886ba2fe0/state/analysis"
-OUTPUT_DIR = r"C:\QlikPrint\pdfs"
-TMP_DIR = r"C:\QlikPrint\tmp"
+OUTPUT_DIR = r"K:\e-GovEns\print\pdfs"
+TMP_DIR = r"K:\e-GovEns\print\tmp"
 WAIT_MAX_MS = 300_000
 
-# ============================
+# ============================K:\e-GovEns\print\pdfs
 
 def safe(s: str) -> str:
     s = (s or "").strip()
