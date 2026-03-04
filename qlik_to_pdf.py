@@ -575,6 +575,24 @@ def main():
         # --- ECEMAR (4) ---
         if click_menu_item(page, "ECEMAR"):
             wait_qlik(page, extra_ms=6500)
+            # Garante que estamos na tela principal da ECEMAR antes da 1ª captura.
+            has_cursos = False
+            has_plamens = False
+            for _ in range(2):
+                stage = page.locator("#qv-stage-container")
+                has_cursos = stage.get_by_text("Cursos da ECEMAR", exact=False).count() > 0
+                has_plamens = (
+                    stage.get_by_text("PLAMENS exterior", exact=False).count() > 0
+                    or stage.get_by_text("PLAMENS Exterior", exact=False).count() > 0
+                    or stage.get_by_text("PLAMENS EXTERIOR", exact=False).count() > 0
+                )
+                if has_cursos and has_plamens:
+                    break
+                click_menu_item(page, "ECEMAR")
+                wait_qlik(page, extra_ms=4500)
+
+            if not (has_cursos and has_plamens):
+                print("[AVISO] ECEMAR: tela principal não confirmou os 2 cards antes da captura.")
             idx = add_shot(page, shots, idx, "ECEMAR")
 
             # 1) Cursos da ECEMAR (PDF tem)
