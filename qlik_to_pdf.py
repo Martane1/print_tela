@@ -8,7 +8,7 @@ from PIL import Image
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 # ====== CONFIGURE AQUI ======
-QLIK_URL = r"https://acesso.sigaer.intraer:5432/mashup/sense/app/85e81e92-7767-4397-896a-3c78068598b8/sheet/c7aa1aef-f126-4b57-9479-d5911d96add3/state/analysis"
+QLIK_URL = r"https://acesso.sigaer.intraer:5432/mashup/sense/app/85e81e92-7767-4397-896a-3c78068598b8/sheet/cf6953e4-a968-4199-9046-436886ba2fe0/state/analysis"
 OUTPUT_DIR = r"C:\QlikPrint\pdfs"
 TMP_DIR = r"C:\QlikPrint\tmp"
 WAIT_MAX_MS = 300_000
@@ -170,12 +170,12 @@ def click_text(page, text: str, nth: int = 0) -> bool:
     stage = page.locator("#qv-stage-container")
     whole_word = is_acronym(text)
 
+    # tenta clicar como footnote (muito comum no Qlik)
     if whole_word:
         txt_rx = re.compile(rf"(?<!\w){re.escape(text)}(?!\w)", re.IGNORECASE)
     else:
         txt_rx = re.compile(re.escape(text), re.IGNORECASE)
 
-    # tenta clicar como footnote (muito comum no Qlik)
     foot = stage.locator("footer.qv-object-footnote", has_text=txt_rx)
     if foot.count() > nth:
         art = foot.nth(nth).locator("xpath=ancestor::article[contains(@class,'qv-object')]")
@@ -224,6 +224,7 @@ def click_by_bg_image(page, img_substring: str, nth: int = 0) -> bool:
     base_name = os.path.basename(token_base)
     stem = base_name.rsplit(".", 1)[0]
     tokens = {token_base, base_name, stem}
+    tokens.update(part for part in re.split(r"[_\-\s]+", stem) if len(part) >= 3)
     tokens = [t for t in tokens if t]
 
     try:
