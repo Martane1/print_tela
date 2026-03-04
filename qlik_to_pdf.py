@@ -414,52 +414,59 @@ def add_shot(page, shots, idx, label):
     print(f"[OK] Capturada: {label}")
     return idx + 1
 
+def click_tab_any_nth(page, label_options, nth_options) -> bool:
+    """
+    Tenta clicar a aba com vários índices possíveis (útil quando existem
+    abas com mesmo nome em gráficos diferentes na mesma tela).
+    """
+    nth_options = nth_options or [0]
+    for nth in nth_options:
+        if click_tab(page, label_options, nth=nth):
+            return True
+    return False
+
 def capture_detalhar_tabs(page, shots, idx, base_label):
     """
-    Dentro da tela Detalhar, captura as 4 visões na ordem:
-    1) visão mensal (estado inicial)
-    2) visão acumulado mensal
-    3) visão mensal
-    4) visão semanal
+    Dentro da tela Detalhar, captura 2 combinações na ordem:
+    1) gráfico de cima em Visão Mensal + gráfico de baixo em Visão Mensal
+    2) gráfico de cima em Visão Acumulado Mensal + gráfico de baixo em Visão Semanal
     """
-    # 1) Mensal inicial (estado ao entrar no Detalhar)
-    idx = add_shot(page, shots, idx, f"{base_label} - Visão mensal (1)")
-
-    steps = [
-        (
-            "Visão acumulado mensal",
-            [
-                "VISÃO ACUMULADO MENSAL",
-                "Visão ACUMULADO MENSAL",
-                "Visão MENSAL ACUMULADO",
-                "VISÃO MENSAL ACUMULADO",
-            ],
-        ),
-        (
-            "Visão mensal (2)",
-            [
-                "VISÃO MENSAL",
-                "Visão MENSAL",
-                "Visão Mensal",
-            ],
-        ),
-        (
-            "Visão semanal",
-            [
-                "VISÃO SEMANAL",
-                "Visão SEMANAL",
-                "Visão Semanal",
-            ],
-        ),
+    mensal_labels = [
+        "VISÃO MENSAL",
+        "Visão MENSAL",
+        "Visão Mensal",
+    ]
+    acumulado_labels = [
+        "VISÃO ACUMULADO MENSAL",
+        "Visão ACUMULADO MENSAL",
+        "Visão MENSAL ACUMULADO",
+        "VISÃO MENSAL ACUMULADO",
+    ]
+    semanal_labels = [
+        "VISÃO SEMANAL",
+        "Visão SEMANAL",
+        "Visão Semanal",
     ]
 
-    for suffix, labels in steps:
-        if click_tab(page, labels):
-            wait_qlik(page, extra_ms=4500)
-        else:
-            print(f"[AVISO] {base_label}: não achei aba '{suffix}', capturando estado atual.")
-            page.wait_for_timeout(1200)
-        idx = add_shot(page, shots, idx, f"{base_label} - {suffix}")
+    # Captura 1: Mensal/Mensal
+    top_monthly_ok = click_tab_any_nth(page, mensal_labels, [0, 1, 2])
+    bottom_monthly_ok = click_tab_any_nth(page, mensal_labels, [1, 0, 2, 3])
+    if not top_monthly_ok:
+        print(f"[AVISO] {base_label}: não achei aba mensal do gráfico de cima.")
+    if not bottom_monthly_ok:
+        print(f"[AVISO] {base_label}: não achei aba mensal do gráfico de baixo.")
+    wait_qlik(page, extra_ms=4500)
+    idx = add_shot(page, shots, idx, f"{base_label} - Mensal/Mensal")
+
+    # Captura 2: Acumulado Mensal/Semanal
+    top_acc_ok = click_tab_any_nth(page, acumulado_labels, [0, 1, 2])
+    bottom_weekly_ok = click_tab_any_nth(page, semanal_labels, [0, 1, 2, 3])
+    if not top_acc_ok:
+        print(f"[AVISO] {base_label}: não achei aba acumulado mensal do gráfico de cima.")
+    if not bottom_weekly_ok:
+        print(f"[AVISO] {base_label}: não achei aba semanal do gráfico de baixo.")
+    wait_qlik(page, extra_ms=4500)
+    idx = add_shot(page, shots, idx, f"{base_label} - Acumulado/Semanal")
 
     return idx
 
@@ -604,9 +611,9 @@ def main():
             idx = add_shot(page, shots, idx, "AFA")
 
             # Tabs topo na ordem do PDF
-            for tab in ["Formação Aviadores", "Formação Intendência", "Formação Infantaria", "Aeronave / Simulador", "Aeronave/Simulador"]:
+            for tab in ["Formação Aviadores", "Formação Intendência", "Formação Infantaria", "Aeronave / Simulador"]:
                 # tentamos as 2 grafias do Simulador, mas só uma vai existir
-                if "Aeronave" in tab:
+                if tab == "Aeronave / Simulador":
                     if click_text(page, "Aeronave / Simulador") or click_text(page, "Aeronave/Simulador"):
                         wait_qlik(page, extra_ms=5500)
                         idx = add_shot(page, shots, idx, "AFA - Aeronave_Simulador")
