@@ -8,7 +8,7 @@ from PIL import Image
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 # ====== CONFIGURE AQUI ======
-QLIK_URL = r"https://acesso.sigaer.intraer:5432/mashup/sense/app/85e81e92-7767-4397-896a-3c78068598b8/sheet/c7aa1aef-f126-4b57-9479-d5911d96add3/state/analysis"
+QLIK_URL = r"https://acesso.sigaer.intraer:5432/mashup/sense/app/85e81e92-7767-4397-896a-3c78068598b8/sheet/cf6953e4-a968-4199-9046-436886ba2fe0/state/analysis"
 OUTPUT_DIR = r"C:\QlikPrint\pdfs"
 TMP_DIR = r"C:\QlikPrint\tmp"
 WAIT_MAX_MS = 300_000
@@ -642,4 +642,5 @@ def main():
     print(f"Total de páginas: {len(shots)}")
 
 if __name__ == "__main__":
+
     main()
