@@ -318,6 +318,28 @@ def add_shot(page, shots, idx, label):
     print(f"[OK] Capturada: {label}")
     return idx + 1
 
+def files_are_identical(path_a: str, path_b: str) -> bool:
+    """
+    Compara dois arquivos byte a byte.
+    Usado para descartar capturas duplicadas.
+    """
+    try:
+        if not (os.path.exists(path_a) and os.path.exists(path_b)):
+            return False
+        if os.path.getsize(path_a) != os.path.getsize(path_b):
+            return False
+
+        with open(path_a, "rb") as fa, open(path_b, "rb") as fb:
+            while True:
+                chunk_a = fa.read(1024 * 1024)
+                chunk_b = fb.read(1024 * 1024)
+                if chunk_a != chunk_b:
+                    return False
+                if not chunk_a:
+                    return True
+    except:
+        return False
+
 def build_pdf(png_paths, out_pdf):
     if not png_paths:
         print("[ERRO] Nenhuma imagem foi gerada. Veja o PNG de debug e os avisos do log.")
@@ -541,6 +563,7 @@ def main():
             ):
                 wait_qlik(page, extra_ms=6500)
                 idx = add_shot(page, shots, idx, "ECEMAR - PLAMENS exterior (1)")
+                first_plamens_png = shots[-1] if shots else ""
 
                 # segunda captura
                 try:
@@ -548,7 +571,19 @@ def main():
                     page.wait_for_timeout(1500)
                 except:
                     pass
-                idx = add_shot(page, shots, idx, "ECEMAR - PLAMENS exterior (2)")
+                second_label = "ECEMAR - PLAMENS exterior (2)"
+                second_png = os.path.join(TMP_DIR, f"page_{idx:03d}_{safe(second_label)}.png")
+                screenshot_page(page, second_png)
+                if files_are_identical(first_plamens_png, second_png):
+                    try:
+                        os.remove(second_png)
+                    except:
+                        pass
+                    print("[INFO] ECEMAR - PLAMENS exterior: 2ª captura descartada por duplicidade.")
+                else:
+                    shots.append(second_png)
+                    print(f"[OK] Capturada: {second_label}")
+                    idx += 1
 
                 back_to_om(page, "ECEMAR")
 
@@ -586,7 +621,7 @@ def main():
             assistenciais_cards = [
                 (["CBNB"], ["cbnb_egovens_2.png", "cbnb"], "ASSISTENCIAIS - CBNB"),
                 (["CTRB"], ["ctrb_egovens_2.png", "ctrb"], "ASSISTENCIAIS - CTRB"),
-                (["ECE"], ["ece_egovens_2.png", "ece_egovens"], "ASSISTENCIAIS - ECE"),
+                ([], ["ece_egovens_2.png", "ece_egovens"], "ASSISTENCIAIS - ECE"),
             ]
 
             for txt_opts, img_opts, label in assistenciais_cards:
