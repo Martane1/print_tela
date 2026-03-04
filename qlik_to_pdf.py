@@ -203,6 +203,75 @@ def click_button(page, name: str, nth: int = 0) -> bool:
         return True
     return False
 
+def click_tab(page, label_options, nth: int = 0) -> bool:
+    """
+    Clica em abas (role=tab) com variações de rótulo.
+    """
+    label_options = label_options or []
+    stage = page.locator("#qv-stage-container")
+
+    for label in label_options:
+        label = (label or "").strip()
+        if not label:
+            continue
+
+        # 1) Role tab com nome (mais confiável)
+        rx = re.compile(rf"^\s*{re.escape(label)}\s*$", re.IGNORECASE)
+        loc = stage.get_by_role("tab", name=rx)
+        if loc.count() > nth:
+            loc.nth(nth).click()
+            return True
+
+        # 2) Fallback por texto dentro de botões de aba
+        loc2 = stage.locator("button[role='tab']", has_text=re.compile(re.escape(label), re.IGNORECASE))
+        if loc2.count() > nth:
+            loc2.nth(nth).click()
+            return True
+
+    # 3) Fallback JS para title/aria-label/texto
+    try:
+        ok = bool(page.evaluate(
+            """({ labels, nth }) => {
+                const norm = (s) => (s || "")
+                    .normalize("NFD")
+                    .replace(/[\\u0300-\\u036f]/g, "")
+                    .toLowerCase()
+                    .replace(/\\s+/g, " ")
+                    .trim();
+                const isVisible = (el) => {
+                    if (!el) return false;
+                    const r = el.getBoundingClientRect();
+                    if (!r || r.width < 1 || r.height < 1) return false;
+                    const st = window.getComputedStyle(el);
+                    return st.display !== "none" && st.visibility !== "hidden";
+                };
+                const targets = (labels || []).map(norm).filter(Boolean);
+                if (!targets.length) return false;
+                const root = document.querySelector("#qv-stage-container") || document;
+                const tabs = Array.from(root.querySelectorAll("button[role='tab'], [role='tab']"));
+                const matches = tabs.filter((tab) => {
+                    if (!isVisible(tab)) return false;
+                    const txt = norm(tab.innerText || tab.textContent || "");
+                    const ttl = norm(tab.getAttribute("title") || "");
+                    const aria = norm(tab.getAttribute("aria-label") || "");
+                    const blob = `${txt} ${ttl} ${aria}`;
+                    return targets.some((t) => blob.includes(t));
+                });
+                const picked = matches[nth];
+                if (!picked) return false;
+                picked.scrollIntoView({ block: "center", inline: "center" });
+                picked.click();
+                return true;
+            }""",
+            {"labels": label_options, "nth": nth},
+        ))
+        if ok:
+            return True
+    except:
+        pass
+
+    return False
+
 def click_by_bg_image(page, img_substring: str, nth: int = 0) -> bool:
     """
     Clica em botões do Qlik que não têm texto, mas têm background-image no style.
@@ -344,6 +413,55 @@ def add_shot(page, shots, idx, label):
     shots.append(png)
     print(f"[OK] Capturada: {label}")
     return idx + 1
+
+def capture_detalhar_tabs(page, shots, idx, base_label):
+    """
+    Dentro da tela Detalhar, captura as 4 visões na ordem:
+    1) visão mensal (estado inicial)
+    2) visão acumulado mensal
+    3) visão mensal
+    4) visão semanal
+    """
+    # 1) Mensal inicial (estado ao entrar no Detalhar)
+    idx = add_shot(page, shots, idx, f"{base_label} - Visão mensal (1)")
+
+    steps = [
+        (
+            "Visão acumulado mensal",
+            [
+                "VISÃO ACUMULADO MENSAL",
+                "Visão ACUMULADO MENSAL",
+                "Visão MENSAL ACUMULADO",
+                "VISÃO MENSAL ACUMULADO",
+            ],
+        ),
+        (
+            "Visão mensal (2)",
+            [
+                "VISÃO MENSAL",
+                "Visão MENSAL",
+                "Visão Mensal",
+            ],
+        ),
+        (
+            "Visão semanal",
+            [
+                "VISÃO SEMANAL",
+                "Visão SEMANAL",
+                "Visão Semanal",
+            ],
+        ),
+    ]
+
+    for suffix, labels in steps:
+        if click_tab(page, labels):
+            wait_qlik(page, extra_ms=4500)
+        else:
+            print(f"[AVISO] {base_label}: não achei aba '{suffix}', capturando estado atual.")
+            page.wait_for_timeout(1200)
+        idx = add_shot(page, shots, idx, f"{base_label} - {suffix}")
+
+    return idx
 
 def files_are_identical(path_a: str, path_b: str) -> bool:
     """
@@ -507,13 +625,13 @@ def main():
                 # Clique no 1º Detalhar
                 if click_button(page, "Detalhar", nth=0) or click_text(page, "Detalhar", nth=0):
                     wait_qlik(page, extra_ms=7000)
-                    idx = add_shot(page, shots, idx, "AFA - T25 Detalhar CFOAV 2º Ano")
+                    idx = capture_detalhar_tabs(page, shots, idx, "AFA - T25 Detalhar CFOAV 2º Ano")
                     back(page)
 
                 # Clique no 2º Detalhar
                 if click_button(page, "Detalhar", nth=1) or click_text(page, "Detalhar", nth=1):
                     wait_qlik(page, extra_ms=7000)
-                    idx = add_shot(page, shots, idx, "AFA - T25 Detalhar CFOAV 4º Ano")
+                    idx = capture_detalhar_tabs(page, shots, idx, "AFA - T25 Detalhar CFOAV 4º Ano")
                     back(page)
 
             # Instrução T27 (principal)
@@ -524,7 +642,7 @@ def main():
                 # No T27 o PDF tem 1 Detalhar
                 if click_button(page, "Detalhar", nth=0) or click_text(page, "Detalhar", nth=0):
                     wait_qlik(page, extra_ms=7000)
-                    idx = add_shot(page, shots, idx, "AFA - T27 Detalhar CFOAV 4º Ano")
+                    idx = capture_detalhar_tabs(page, shots, idx, "AFA - T27 Detalhar CFOAV 4º Ano")
                     back(page)
 
             # Esforço Aéreo
